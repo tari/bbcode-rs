@@ -1,16 +1,13 @@
+//! Block quotes.
+
+use super::Segment::Quote;
 use super::{segment, Segment};
 
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub struct Quote<'a> {
-    pub attribution: Option<&'a str>,
-    pub body: Vec<Segment<'a>>
-}
-
-named!(pub quote(&str) -> Quote,
+named!(pub quote(&str) -> Segment,
     map!(
         terminated!(
-            pair!(qhead, many0!(segment)),
-            tag!("[/quote]")
+            pair!(qhead, many0!(call!(segment, "[/quote]"))),
+            tag_no_case!("[/quote]")
         ),
         |(attribution, body)| Quote { attribution, body }
     )
@@ -18,9 +15,9 @@ named!(pub quote(&str) -> Quote,
 
 named!(qhead(&str) -> Option<&str>,
     delimited!(
-        tag!("[quote"),
+        tag_no_case!("[quote"),
         opt!(preceded!(tag!("=\""), take_until_and_consume!("\""))),
-        tag!("]")
+        char!(']')
     )
 );
 
@@ -32,18 +29,37 @@ fn just_qhead() {
 
 #[cfg(test)]
 mod tests {
-    use super::Quote;
-    use super::quote as real_quote;
     use super::super::Segment;
+    use super::quote as real_quote;
+    use super::Quote;
 
-    named!(quote(&str) -> Quote, dbg_dmp!(real_quote));
+    named!(quote(&str) -> Segment, dbg!(real_quote));
+
+    #[test]
+    fn empty_quote() {
+        assert_eq!(
+            quote("[quote][/quote])"),
+            Ok((
+                ")",
+                Quote {
+                    attribution: None,
+                    body: vec![],
+                }
+            ))
+        );
+    }
 
     #[test]
     fn quote_without_attribution() {
-        assert_eq!(quote("[quote]lol[/quote]More stuff"),
-            Ok(("More stuff", Quote {
-                attribution: None,
-                body: vec![Segment::PlainText("lol")]
-            })));
+        assert_eq!(
+            quote("[quote]lol[/quote]More stuff"),
+            Ok((
+                "More stuff",
+                Quote {
+                    attribution: None,
+                    body: vec![Segment::Text("lol")]
+                }
+            ))
+        );
     }
 }

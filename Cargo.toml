@@ -5,3 +5,5 @@ authors = ["Peter Marheine <peter@taricorp.net>"]
 
 [dependencies]
 nom = "4.0"
+log = "0.4"
+palette = "0.4.1"
