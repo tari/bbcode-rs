@@ -43,6 +43,7 @@ pub trait Renderer {
                     self.render(segments)?;
                     self.link_end(target)?
                 }
+                Segment::Image { src } => self.image(src)?,
             }
         }
 
@@ -73,6 +74,7 @@ pub trait Renderer {
     fn link_begin(&mut self, target: &str) -> Result<Self::Err>;
     /// Output the end of a link.
     fn link_end(&mut self, target: &str) -> Result<Self::Err>;
+    fn image(&mut self, src: &str) -> Result<Self::Err>;
 }
 
 pub struct SimpleHtml<O>
@@ -86,20 +88,23 @@ impl<O: std::io::Write> SimpleHtml<O> {
     pub fn new(out: O) -> Self {
         Self { out }
     }
-}
 
-use std::io::Result as IoResult;
+    /// Write s to output, replacing each character in escapes with the corresponding
+    /// index of replacements.
+    ///
+    /// Each escaped character must be one UTF-8 byte (for simplicity) and the
+    /// two slices must be the same length.
+    fn write_escaped(
+        &mut self,
+        mut s: &str,
+        escapes: &[char],
+        replacements: &[&'static str],
+    ) -> IoResult<()> {
+        debug_assert_eq!(escapes.len(), replacements.len());
+        debug_assert!(escapes.iter().all(|c| c.len_utf8() == 1));
 
-impl<O: std::io::Write> Renderer for SimpleHtml<O> {
-    type Err = std::io::Error;
-
-    fn text(&mut self, mut s: &str) -> IoResult<()> {
-        // This is slightly tricky in that we must escape HTML special characters.
-        // Fortunately it's very easy and there are only three characters we should
-        // expand to the equivalent entities (much easier than allowing some tags
-        // but not all!).
         loop {
-            let split = match s.find(&['&', '<', '>', '\n'][..]) {
+            let split = match s.find(escapes) {
                 Some(i) => i,
                 None => break,
             };
@@ -108,20 +113,36 @@ impl<O: std::io::Write> Renderer for SimpleHtml<O> {
             // tail is inclusive of the split point and all of the matched
             // chars are one byte in UTF-8, so taking the first byte here
             // is safe (and easier than pulling out the first char).
-            let repl = match tail.as_bytes()[0] {
-                b'&' => "&amp",
-                b'<' => "&lt;",
-                b'>' => "&gt;",
-                b'\n' => "<br>",
-                _ => unreachable!(),
-            };
+            let victim = tail.as_bytes()[0] as char;
+            let repl = escapes
+                .iter()
+                .enumerate()
+                .find(|(_, &c)| c == victim)
+                .unwrap()
+                .0;
 
-            write!(self.out, "{}{}", head, repl)?;
+            write!(self.out, "{}{}", head, replacements[repl])?;
             s = &tail[1..];
         }
 
         // Write remaining data past all replaced entities
         write!(self.out, "{}", s)
+    }
+}
+
+use std::io::Result as IoResult;
+
+impl<O: std::io::Write> Renderer for SimpleHtml<O> {
+    type Err = std::io::Error;
+
+    fn text(&mut self, mut s: &str) -> IoResult<()> {
+        // Escape tags and entities, also replace newlines with explicit
+        // line breaks.
+        self.write_escaped(
+            s,
+            &['&', '<', '>', '\n'],
+            &["&amp;", "&lt;", "&gt;", "<br>"],
+        )
     }
 
     fn decoration_begin(&mut self, style: DecorationStyle) -> IoResult<()> {
@@ -135,9 +156,12 @@ impl<O: std::io::Write> Renderer for SimpleHtml<O> {
             Color(r, g, b) => {
                 return write!(
                     self.out,
-                    r#"span style="color: #{:02x}{:02x}{:02x}""#,
+                    r#"<span style="color: #{:02x}{:02x}{:02x}">"#,
                     r, g, b
                 )
+            }
+            Size(s) => {
+                return write!(self.out, r#"<span style="font-size: {}>"#, s);
             }
         };
         write!(self.out, "<{}>", tag)
@@ -151,7 +175,7 @@ impl<O: std::io::Write> Renderer for SimpleHtml<O> {
             Italic => "i",
             Underline => "u",
             Center => "div",
-            Color(..) => "span",
+            Color(..) | Size(..) => "span",
         };
         write!(self.out, "<{}>", tag)
     }
@@ -196,5 +220,11 @@ impl<O: std::io::Write> Renderer for SimpleHtml<O> {
 
     fn link_end(&mut self, target: &str) -> IoResult<()> {
         unimplemented!();
+    }
+
+    fn image(&mut self, src: &str) -> IoResult<()> {
+        write!(self.out, "<img src=\"")?;
+        self.write_escaped(src, &['<', '>', '"'], &["&lt;", "&gt;", "&quot;"])?;
+        write!(self.out, ">")
     }
 }

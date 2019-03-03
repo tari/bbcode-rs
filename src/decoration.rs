@@ -2,6 +2,7 @@
 
 use super::{segment, Segment};
 use palette::Srgb;
+use std::num::NonZeroU8;
 
 /// Styles that can be applied to decorated spans.
 #[derive(PartialEq, Eq, Debug, Clone, Copy, Hash)]
@@ -13,6 +14,8 @@ pub enum DecorationStyle {
     Center,
     /// Colored with specified sRGB components (as in CSS).
     Color(u8, u8, u8),
+    /// Font size at some arbitrary scale.
+    Size(NonZeroU8),
 }
 
 fn styled(s: DecorationStyle) -> impl for<'a> Fn(Vec<Segment<'a>>) -> Segment<'a> {
@@ -25,6 +28,7 @@ named!(pub decorated(&str) -> Segment,
         | map!(underline, styled(DecorationStyle::Underline))
         | map!(center, styled(DecorationStyle::Center))
         | color
+        | size
     )
 );
 
@@ -102,9 +106,9 @@ named!(rgb_color(&str) -> (u8, u8, u8),
         |digits| {
             if digits.len() == 3 {
                 let (r, g, b) = (
-                    u8::from_str_radix(&digits[0..1], 16).unwrap() << 4,
-                    u8::from_str_radix(&digits[1..2], 16).unwrap() << 4,
-                    u8::from_str_radix(&digits[2..3], 16).unwrap() << 4
+                    u8::from_str_radix(&digits[0..1], 16).unwrap(),
+                    u8::from_str_radix(&digits[1..2], 16).unwrap(),
+                    u8::from_str_radix(&digits[2..3], 16).unwrap()
                 );
                 (r + (r << 4),
                  g + (g << 4),
@@ -127,3 +131,79 @@ named!(css_color(&str) -> (u8, u8, u8),
         |c| c.unwrap().into_components()
     )
 );
+
+#[test]
+fn accepts_colors() {
+    assert_eq!(
+        color("[color=red]asdf[/color]").unwrap().1,
+        Segment::Decorated {
+            style: DecorationStyle::Color(255, 0, 0),
+            text: vec![Segment::Text("asdf")],
+        }
+    );
+
+    assert_eq!(
+        color("[color=#81f][/color]").unwrap().1,
+        Segment::Decorated {
+            style: DecorationStyle::Color(0x88, 0x11, 0xFF),
+            text: vec![],
+        }
+    );
+
+    assert_eq!(
+        color("[color=#01FE9A]and[/color]").unwrap().1,
+        Segment::Decorated {
+            style: DecorationStyle::Color(1, 0xFE, 0x9A),
+            text: vec![Segment::Text("and")],
+        }
+    );
+}
+
+#[test]
+fn rejects_invalid_css_colors() {
+    assert!(css_color("beyblade").is_err());
+}
+
+named!(pub size(&str) -> Segment,
+    map!(
+        pair!(
+            size_head,
+            terminated!(many0!(call!(segment, "[/size]")),
+                        tag_no_case!("[/size]"))
+        ),
+        |(size, text)| Segment::Decorated {
+            style: DecorationStyle::Size(size),
+            text,
+        }
+    )
+);
+
+named!(size_head(&str) -> NonZeroU8,
+    map_opt!(
+        verify!(
+            map_res!(
+                delimited!(
+                    tag_no_case!("[size="),
+                    nom::digit1,
+                    char!(']')
+                ),
+                str::parse::<u8>
+            ),
+            |x| x >= 2 && x < 30
+        ),
+        NonZeroU8::new
+    )
+);
+
+#[test]
+fn enforces_size_limits() {
+    assert_eq!(
+        size("[size=10]midsize[/size]").unwrap().1,
+        Segment::Decorated {
+            style: DecorationStyle::Size(NonZeroU8::new(10).unwrap()),
+            text: vec![Segment::Text("midsize")],
+        }
+    );
+    assert!(size_head("[size=0]").is_err());
+    assert!(size_head("[size=50]").is_err());
+}

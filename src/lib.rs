@@ -77,19 +77,15 @@ pub enum Segment<'a> {
         target: &'a str,
         text: Vec<Segment<'a>>,
     },
-    // TODO extra items
-    // [size=0-29]
-    // [img]
-    // [youtube]
-    // [br]
-    // [hr]
-    // [h1] - [h6]
-    // [sub]
-    // [sup]
-    // [serif]
-    // [sans]
-    // [strike]
-    // [mono]
+    /// A picture, displayed inline.
+    Image { src: &'a str }, // TODO extra items
+                            // [youtube]
+                            // [hr]
+                            // [h1] - [h6]
+                            // [sub]
+                            // [sup]
+                            // [strike]
+                            // [mono]
 }
 
 /// Parse a string into a sequence of `Segment`s.
@@ -176,8 +172,9 @@ named!(coded_segment(&str) -> Segment,
     alt_complete!(
         decoration::decorated
         | code::code
-        | quote::quote
+        | image
         | list::list
+        | quote::quote
         | url::url
     )
 );
@@ -250,4 +247,25 @@ fn nested_segments() {
             ],
         }]
     );
+}
+
+named!(image(&str) -> Segment,
+    map!(
+        delimited!(
+            tag_no_case!("[img]"),
+            take_until_no_case!("[/img]"),
+            tag_no_case!("[/img]")
+        ),
+        |src| Segment::Image { src }
+    )
+);
+
+#[test]
+fn parse_image() {
+    assert_eq!(
+        parse("[img]http://example.com/foo.webp[/img]"),
+        vec![Segment::Image {
+            src: "http://example.com/foo.webp"
+        }]
+    )
 }
