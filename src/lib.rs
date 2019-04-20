@@ -36,6 +36,7 @@ extern crate palette;
 
 use nom::{types::CompleteStr, AtEof};
 use std::fmt::Debug;
+use std::os::raw::c_char;
 
 #[macro_use]
 mod macros;
@@ -48,6 +49,45 @@ mod url;
 
 pub use decoration::DecorationStyle;
 pub use list::ListStyle;
+
+/// FFI entry point; converts a UTF-8 string of bbcode to rendered code.
+///
+/// If the input string contains any invalid UTF-8 bytes it will be
+/// recovered by insertion of U+FFFD REPLACEMENT CHARACTER.
+///
+/// The returned pointer must be freed by calling `bbcode_dispose`.
+#[no_mangle]
+pub extern "C" fn bbcode_translate(s: *const c_char) -> *mut c_char {
+    use std::ffi::{CStr, CString};
+    use render::Renderer;
+
+    let utf8 = unsafe {
+        CStr::from_ptr(s).to_string_lossy()
+    };
+    let segments = parse(&utf8);
+
+    // Render into a memory buffer; we're likely to emit about as many bytes
+    // as there are in the input, maybe more.
+    let mut buf = Vec::<u8>::with_capacity(utf8.len());
+    {
+        let mut renderer = render::SimpleHtml::new(&mut buf);
+        renderer.render(&segments)
+            .expect("Rendering to a memory buffer should never fail");
+    }
+    return CString::new(buf)
+        .expect("Rendering should not generate null bytes")
+        .into_raw();
+}
+
+/// Free a string returned from `bbcode_translate`.
+#[no_mangle]
+pub extern "C" fn bbcode_dispose(s: *mut c_char) {
+    use std::ffi::CString;
+
+    let _ = unsafe {
+        CString::from_raw(s)
+    };
+}
 
 /// Any logical segment of data- a tag or plain text.
 #[derive(PartialEq, Eq, Debug, Clone, Hash)]

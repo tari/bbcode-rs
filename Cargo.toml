@@ -3,7 +3,13 @@ name = "bbcode"
 version = "0.1.0"
 authors = ["Peter Marheine <peter@taricorp.net>"]
 
+[lib]
+crate-type = ["rlib", "dylib"]
+
 [dependencies]
 nom = "4.0"
 log = "0.4"
 palette = "0.4.1"
+
+[profile.release]
+lto = true
